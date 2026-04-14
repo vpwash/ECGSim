@@ -10,6 +10,7 @@ class SignalGeneratorCore {
     this.hr = 60;
     this.rr = 12;
     this.spo2 = 98;
+    this.co2 = 40;
     this.rhythm = 'nsr';
     this.shockCurrent = 0;
     this.postShockFlatlineRemaining = 0;
@@ -280,6 +281,7 @@ class SignalGeneratorCore {
   setHR(hr) { this.hr = hr; }
   setRR(rr) { this.rr = rr; }
   setSPO2(spo2) { this.spo2 = spo2; }
+  setCO2(co2) { this.co2 = co2; }
   setRhythmState(rhythm) { this.rhythm = rhythm; }
 
   setAudioParams(isMuted, volume) {
@@ -486,11 +488,14 @@ class SignalGeneratorCore {
   }
 
   getCO2(time) {
+    const scale = Math.max(0, this.co2) / 40; // Normalize to 40mmHg baseline
     const p = this.respPhase;
-    if (p < 0.5) return 0.5;
-    if (p < 0.6) return 0.5 - ((p - 0.5) / 0.1) * 0.8;
-    if (p < 0.9) return -0.3 - ((p - 0.6) / 0.3) * 0.1;
-    return -0.4 + ((p - 0.9) / 0.1) * 0.9;
+    let raw;
+    if (p < 0.5) raw = 0.5;
+    else if (p < 0.6) raw = 0.5 - ((p - 0.5) / 0.1) * 0.8;
+    else if (p < 0.9) raw = -0.3 - ((p - 0.6) / 0.3) * 0.1;
+    else raw = -0.4 + ((p - 0.9) / 0.1) * 0.9;
+    return raw * scale;
   }
 }
 

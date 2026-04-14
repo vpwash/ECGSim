@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import WaveformCanvas from './components/WaveformCanvas';
 import { vitalsTracker } from './utils/signalGenerators';
+import { scenarios } from './utils/scenarios';
 import { Activity, HeartPulse, Settings, Volume2 } from 'lucide-react';
 
 const InputControl = ({label, value, max, step = 1, onChange}) => (
@@ -76,6 +77,11 @@ export default function App() {
 
   const [rhythm, setRhythm] = useState('nsr'); // nsr, brady, tachy, svt, vtach, vfib_coarse, vfib_fine, asystole, cpr
   const [isRhythmModalOpen, setIsRhythmModalOpen] = useState(false);
+  const [isScenarioModalOpen, setIsScenarioModalOpen] = useState(false);
+  const [activeScenario, setActiveScenario] = useState(null);
+  const [currentStageIndex, setCurrentStageIndex] = useState(0);
+  const [targetVitals, setTargetVitals] = useState(null);
+  const driftStepsRef = React.useRef({ hr:1, bpSys:1, bpDia:1, spo2:1, co2:1, rr:1, temp:0.1 });
   const [preCprState, setPreCprState] = useState(null);
   
   // Interventions State
@@ -107,6 +113,38 @@ export default function App() {
     const timer = setInterval(() => setTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
+
+  // Vitals drifting logic — steps are pre-computed to complete in 2 seconds (10 ticks × 200ms)
+  useEffect(() => {
+    if (!targetVitals) return;
+    
+    const s = driftStepsRef.current;
+    const interval = setInterval(() => {
+      setVitals(prev => {
+        let allMatched = true;
+        const next = { ...prev };
+        
+        const step = (current, target, maxStep) => {
+          if (Math.abs(current - target) <= maxStep) return target;
+          allMatched = false;
+          return current < target ? current + maxStep : current - maxStep;
+        };
+
+        next.hr   = step(prev.hr,    targetVitals.hr,    s.hr);
+        next.bpSys = step(prev.bpSys, targetVitals.bpSys, s.bpSys);
+        next.bpDia = step(prev.bpDia, targetVitals.bpDia, s.bpDia);
+        next.spo2  = step(prev.spo2,  targetVitals.spo2,  s.spo2);
+        next.co2   = step(prev.co2,   targetVitals.co2,   s.co2);
+        next.rr    = step(prev.rr,    targetVitals.rr,    s.rr);
+        next.temp  = step(prev.temp,  targetVitals.temp,  s.temp);
+
+        if (allMatched) setTargetVitals(null);
+        return next;
+      });
+    }, 200);
+
+    return () => clearInterval(interval);
+  }, [targetVitals]);
 
   const toggleDefib = () => {
     if (isDefibOn) {
@@ -159,8 +197,9 @@ export default function App() {
     vitalsTracker.setHR(vitals.hr);
     vitalsTracker.setRR(vitals.rr);
     vitalsTracker.setSPO2(vitals.spo2);
+    vitalsTracker.setCO2(vitals.co2);
     vitalsTracker.setRhythmState(rhythm);
-  }, [vitals.hr, vitals.rr, vitals.spo2, rhythm]);
+  }, [vitals.hr, vitals.rr, vitals.spo2, vitals.co2, rhythm]);
 
   useEffect(() => {
     vitalsTracker.setPacer(isPacerOn, isPacerPaused, pacerRate, pacerOutput);
@@ -186,6 +225,53 @@ export default function App() {
 
   const updateVital = (key, value) => {
     setVitals(v => ({ ...v, [key]: value }));
+    setTargetVitals(null); // Cancel automatic drift on manual override
+  };
+
+  const DRIFT_TICKS = 10; // 10 × 200ms = 2 seconds
+
+  const loadScenarioStage = (stage) => {
+     const tv = stage.vitals;
+     // Capture step sizes from current vitals at the moment of load
+     driftStepsRef.current = {
+       hr:    Math.max(1,   Math.ceil(Math.abs(tv.hr    - vitals.hr)    / DRIFT_TICKS)),
+       bpSys: Math.max(1,   Math.ceil(Math.abs(tv.bpSys - vitals.bpSys) / DRIFT_TICKS)),
+       bpDia: Math.max(1,   Math.ceil(Math.abs(tv.bpDia - vitals.bpDia) / DRIFT_TICKS)),
+       spo2:  Math.max(1,   Math.ceil(Math.abs(tv.spo2  - vitals.spo2)  / DRIFT_TICKS)),
+       co2:   Math.max(1,   Math.ceil(Math.abs(tv.co2   - vitals.co2)   / DRIFT_TICKS)),
+       rr:    Math.max(1,   Math.ceil(Math.abs(tv.rr    - vitals.rr)    / DRIFT_TICKS)),
+       temp:  Math.max(0.1, Math.abs(tv.temp  - vitals.temp)  / DRIFT_TICKS),
+     };
+     // If CPR is active, queue the new rhythm as the post-CPR state instead of interrupting it
+     if (rhythm === 'cpr') {
+       setPreCprState(prev => ({ ...prev, rhythm: stage.rhythm }));
+     } else {
+       setRhythm(stage.rhythm);
+     }
+     setTargetVitals(tv);
+  };
+
+  const loadScenario = (scenario) => {
+      setActiveScenario(scenario);
+      setCurrentStageIndex(0);
+      setIsScenarioModalOpen(false);
+      loadScenarioStage(scenario.stages[0]);
+  };
+
+  const nextStage = () => {
+     if (activeScenario && currentStageIndex < activeScenario.stages.length - 1) {
+         const nextIdx = currentStageIndex + 1;
+         setCurrentStageIndex(nextIdx);
+         loadScenarioStage(activeScenario.stages[nextIdx]);
+     }
+  };
+
+  const prevStage = () => {
+     if (activeScenario && currentStageIndex > 0) {
+         const prevIdx = currentStageIndex - 1;
+         setCurrentStageIndex(prevIdx);
+         loadScenarioStage(activeScenario.stages[prevIdx]);
+     }
   };
 
   const handleRhythmSelect = (newRhythm, defaultHr) => {
@@ -202,7 +288,19 @@ export default function App() {
     const handleKeyDown = (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
       let handled = true;
-      switch(e.key) {
+      switch(e.key.toLowerCase()) {
+        case 'q': updateVital('hr', vitals.hr + 5); break;
+        case 'a': updateVital('hr', Math.max(0, vitals.hr - 5)); break;
+        case 'w': updateVital('bpSys', vitals.bpSys + 5); break;
+        case 's': updateVital('bpSys', Math.max(0, vitals.bpSys - 5)); break;
+        case 'e': updateVital('bpDia', vitals.bpDia + 5); break;
+        case 'd': updateVital('bpDia', Math.max(0, vitals.bpDia - 5)); break;
+        case 'r': updateVital('spo2', Math.min(100, vitals.spo2 + 1)); break;
+        case 'f': updateVital('spo2', Math.max(0, vitals.spo2 - 1)); break;
+        case 't': updateVital('rr', vitals.rr + 1); break;
+        case 'g': updateVital('rr', Math.max(0, vitals.rr - 1)); break;
+        case 'y': updateVital('co2', vitals.co2 + 1); break;
+        case 'h': updateVital('co2', Math.max(0, vitals.co2 - 1)); break;
         case '1': handleRhythmSelect('nsr', 60); break;
         case '2': handleRhythmSelect('brady', 40); break;
         case '3': handleRhythmSelect('tachy', 120); break;
@@ -220,7 +318,7 @@ export default function App() {
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [rhythm, vitals.hr, preCprState]);
+  }, [rhythm, vitals, preCprState]);
 
   const handleCPR = () => {
     if (rhythm === 'cpr') {
@@ -252,7 +350,10 @@ export default function App() {
 
   const displayBPSys = showDashes ? '---' : vitals.bpSys;
   const displayBPDia = showDashes ? '---' : vitals.bpDia;
+  const displayMAP = showDashes ? '---' : Math.round((vitals.bpSys + 2 * vitals.bpDia) / 3);
   const displaySPO2 = showDashes ? '---' : vitals.spo2;
+  const displayTemp = showDashes ? '---' : vitals.temp.toFixed(1);
+  const displayRR = showDashes ? '---' : vitals.rr;
 
   return (
     <>
@@ -292,8 +393,9 @@ export default function App() {
               />
               <div className="vital-readout">
                 <div className="vital-label">Current Pressure</div>
-                <div className="vital-value" style={{color: 'var(--color-bp)'}}>
-                  {displayBPSys}<span style={{fontSize: '2rem'}}>/{displayBPDia}</span>
+                <div className="vital-value" style={{color: 'var(--color-bp)', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center'}}>
+                  <div>{displayBPSys}<span style={{fontSize: '2rem'}}>/{displayBPDia}</span></div>
+                  <div style={{fontSize: '1.8rem', lineHeight: '1', marginTop: '-5px'}}>({displayMAP})</div>
                 </div>
               </div>
             </div>
@@ -345,11 +447,11 @@ export default function App() {
           <div className="panel" style={{flex: 2, display: 'flex', gap: 10}}>
              <div className="panel" style={{flex: 1}}>
                 <div className="vital-label">Temperature</div>
-                <div className="vital-value" style={{color: 'var(--color-temp)', fontSize: '2.5rem'}}>{vitals.temp}</div>
+                <div className="vital-value" style={{color: 'var(--color-temp)', fontSize: '2.5rem'}}>{displayTemp}</div>
              </div>
              <div className="panel" style={{flex: 1}}>
                 <div className="vital-label">Respirations</div>
-                <div className="vital-value" style={{color: 'var(--color-temp)', fontSize: '2.5rem'}}>{vitals.rr}</div>
+                <div className="vital-value" style={{color: 'var(--color-temp)', fontSize: '2.5rem'}}>{displayRR}</div>
              </div>
           </div>
 
@@ -418,8 +520,8 @@ export default function App() {
                     {/* Right Column (Therapy Block) */}
                     <div style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
                         {/* ON Button matching Row 1 height */}
-                        <div style={{height: '32px', display: 'flex', alignItems: 'center'}}>
-                            <PillButton label="ON" bgColor="#3b823b" icon="●" iconColor={isDefibOn ? '#0f0' : '#1a401a'} onClick={toggleDefib} style={{width: '120px'}} />
+                        <div style={{height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+                            <PillButton label="ON" bgColor="#3b823b" icon="●" iconColor={isDefibOn ? '#0f0' : '#1a401a'} onClick={toggleDefib} style={{width: '110px'}} />
                         </div>
                         
                         {/* Therapy Block containing Energy, Charge, Shock */}
@@ -457,6 +559,20 @@ export default function App() {
          <div className="panel controls-wide">
              <div className="controls-panel-title">Scenario Overrides</div>
              
+             {/* Scenario Management */}
+             <div style={{display: 'flex', gap: '10px', marginBottom: '10px'}}>
+                 <button style={{flex: 1, padding: '10px', fontSize: '1rem', background: '#222', border: '1px solid #444', color: activeScenario && currentStageIndex > 0 ? 'white' : '#555', cursor: activeScenario && currentStageIndex > 0 ? 'pointer' : 'default'}} onClick={prevStage}>◀ Back</button>
+                 <button style={{flex: 2, padding: '10px', fontSize: '1rem', background: '#2c3e50', border: '1px solid #34495e', color: 'white', fontWeight: 'bold'}} onClick={() => setIsScenarioModalOpen(true)}>Scenario Menu</button>
+                 <button style={{flex: 1, padding: '10px', fontSize: '1rem', background: '#222', border: '1px solid #444', color: activeScenario && currentStageIndex < activeScenario.stages.length - 1 ? 'white' : '#555', cursor: activeScenario && currentStageIndex < activeScenario.stages.length - 1 ? 'pointer' : 'default'}} onClick={nextStage}>Next ▶</button>
+             </div>
+             {/* Active Scenario Indicator */}
+             {activeScenario && (
+               <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#111827', border: '1px solid #374151', borderRadius: '6px', padding: '6px 10px', marginBottom: '6px'}}>
+                 <div style={{fontSize: '0.7rem', color: '#60a5fa', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.5px'}}>{activeScenario.title}</div>
+                 <div style={{fontSize: '0.7rem', color: '#9ca3af'}}>{currentStageIndex + 1}/{activeScenario.stages.length} — {activeScenario.stages[currentStageIndex].name}</div>
+               </div>
+             )}
+
              {/* Rhythm & CPR Actions */}
              <div style={{display: 'grid', gridTemplateColumns: '1fr', gap: '10px', paddingBottom: '15px', borderBottom: '1px solid #333', marginBottom: '10px'}}>
                  <button style={{height: '50px', fontSize: '1rem', background: '#2c3e50', border: '1px solid #34495e', color: 'white'}} onClick={() => setIsRhythmModalOpen(true)}>Rhythm Selection</button>
@@ -533,6 +649,44 @@ export default function App() {
                          />
                      </div>
                  </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Scenario Selection Modal */}
+      {isScenarioModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsScenarioModalOpen(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '450px'}}>
+            <div className="modal-header">
+              <span>Scenario Menu</span>
+              <button onClick={() => setIsScenarioModalOpen(false)} style={{padding: '4px 10px', fontSize: '1rem'}}>×</button>
+            </div>
+            <div style={{display: 'flex', flexDirection: 'column', gap: '10px'}}>
+              {scenarios.map(scenario => (
+                <button
+                  key={scenario.id}
+                  onClick={() => loadScenario(scenario)}
+                  style={{
+                    display: 'flex', flexDirection: 'column', alignItems: 'flex-start',
+                    padding: '12px 16px', borderRadius: '6px', textAlign: 'left',
+                    background: activeScenario?.id === scenario.id ? '#1e3a5f' : '#1a1d24',
+                    border: activeScenario?.id === scenario.id ? '1px solid #60a5fa' : '1px solid #333',
+                    color: 'white', gap: '4px'
+                  }}
+                >
+                  <div style={{fontWeight: 'bold', fontSize: '0.9rem'}}>{scenario.title}</div>
+                  <div style={{fontSize: '0.75rem', color: '#9ca3af'}}>{scenario.description} — {scenario.stages.length} stages</div>
+                </button>
+              ))}
+              {activeScenario && (
+                <button
+                  onClick={() => { setActiveScenario(null); setCurrentStageIndex(0); setIsScenarioModalOpen(false); }}
+                  style={{marginTop: '4px', background: '#2a0a0a', border: '1px solid #7f1d1d', color: '#fca5a5', padding: '8px'}}
+                >
+                  ✕ Clear Active Scenario
+                </button>
+              )}
             </div>
           </div>
         </div>
