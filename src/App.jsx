@@ -78,6 +78,7 @@ export default function App() {
   const [rhythm, setRhythm] = useState('nsr'); // nsr, brady, tachy, svt, vtach, vfib_coarse, vfib_fine, asystole, cpr
   const [isRhythmModalOpen, setIsRhythmModalOpen] = useState(false);
   const [isScenarioModalOpen, setIsScenarioModalOpen] = useState(false);
+  const [isVitalsModalOpen, setIsVitalsModalOpen] = useState(false);
   const [activeScenario, setActiveScenario] = useState(null);
   const [currentStageIndex, setCurrentStageIndex] = useState(0);
   const [targetVitals, setTargetVitals] = useState(null);
@@ -231,24 +232,18 @@ export default function App() {
   const DRIFT_TICKS = 10; // 10 × 200ms = 2 seconds
 
   const loadScenarioStage = (stage) => {
-     const tv = stage.vitals;
-     // Capture step sizes from current vitals at the moment of load
-     driftStepsRef.current = {
-       hr:    Math.max(1,   Math.ceil(Math.abs(tv.hr    - vitals.hr)    / DRIFT_TICKS)),
-       bpSys: Math.max(1,   Math.ceil(Math.abs(tv.bpSys - vitals.bpSys) / DRIFT_TICKS)),
-       bpDia: Math.max(1,   Math.ceil(Math.abs(tv.bpDia - vitals.bpDia) / DRIFT_TICKS)),
-       spo2:  Math.max(1,   Math.ceil(Math.abs(tv.spo2  - vitals.spo2)  / DRIFT_TICKS)),
-       co2:   Math.max(1,   Math.ceil(Math.abs(tv.co2   - vitals.co2)   / DRIFT_TICKS)),
-       rr:    Math.max(1,   Math.ceil(Math.abs(tv.rr    - vitals.rr)    / DRIFT_TICKS)),
-       temp:  Math.max(0.1, Math.abs(tv.temp  - vitals.temp)  / DRIFT_TICKS),
-     };
-     // If CPR is active, queue the new rhythm as the post-CPR state instead of interrupting it
      if (rhythm === 'cpr') {
-       setPreCprState(prev => ({ ...prev, rhythm: stage.rhythm }));
+       // While CPR is running:
+       // 1. Queue the stage's rhythm AND its HR so handleCPR restores correctly when CPR stops
+       setPreCprState(prev => ({ ...prev, rhythm: stage.rhythm, hr: stage.vitals.hr }));
+       // 2. Apply stage vitals but preserve the current CPR compression rate (vitals.hr)
+       //    so the CPR waveform speed and beep are not disrupted
+       setVitals(prev => ({ ...stage.vitals, hr: prev.hr }));
      } else {
        setRhythm(stage.rhythm);
+       setVitals(stage.vitals);
      }
-     setTargetVitals(tv);
+     setTargetVitals(null);
   };
 
   const loadScenario = (scenario) => {
@@ -301,11 +296,12 @@ export default function App() {
         case 'g': updateVital('rr', Math.max(0, vitals.rr - 1)); break;
         case 'y': updateVital('co2', vitals.co2 + 1); break;
         case 'h': updateVital('co2', Math.max(0, vitals.co2 - 1)); break;
-        case '1': handleRhythmSelect('nsr', 60); break;
-        case '2': handleRhythmSelect('brady', 40); break;
-        case '3': handleRhythmSelect('tachy', 120); break;
-        case '4': handleRhythmSelect('svt', 160); break;
-        case '5': handleRhythmSelect('afib_rvr', 140); break;
+        case '`': handleRhythmSelect('nsr', 60); break;
+        case '1': handleRhythmSelect('brady', 40); break;
+        case '2': handleRhythmSelect('tachy', 120); break;
+        case '3': handleRhythmSelect('svt', 160); break;
+        case '4': handleRhythmSelect('afib_rvr', 140); break;
+        case '5': handleRhythmSelect('vtach_pulse', 150); break;
         case '6': handleRhythmSelect('vtach', 180); break;
         case '7': handleRhythmSelect('mobitz1', 70); break;
         case '8': handleRhythmSelect('mobitz2', 70); break;
@@ -313,6 +309,9 @@ export default function App() {
         case '0': handleRhythmSelect('vfib_coarse'); break;
         case '-': handleRhythmSelect('vfib_fine'); break;
         case '=': handleRhythmSelect('asystole', 0); break;
+        case 'p': handleRhythmSelect('pea', 60); break;
+        case 'arrowleft': prevStage(); break;
+        case 'arrowright': nextStage(); break;
         default: handled = false; break;
       }
     };
@@ -338,8 +337,10 @@ export default function App() {
   };
 
   // derived display vitals
-  const isDead = rhythm === 'vfib_coarse' || rhythm === 'vfib_fine' || rhythm === 'asystole';
+  const isDead = rhythm === 'vfib_coarse' || rhythm === 'vfib_fine' || rhythm === 'asystole' || rhythm === 'vtach';
+  const isPEA = rhythm === 'pea'; // Organized ECG but no pulse
   const showDashes = isDead || rhythm === 'cpr';
+  const showPulseDashes = showDashes || isPEA; // Applies to BP and SpO2 only
   
   // Calculate if the pacer is actively capturing control of the heart rate
   const isPacerCapturing = isPacerOn && !isPacerPaused && pacerOutput >= 70 && rhythm !== 'vfib_coarse' && rhythm !== 'vfib_fine' && rhythm !== 'cpr';
@@ -348,45 +349,42 @@ export default function App() {
   const displayHR = (rhythm === 'vfib_coarse' || rhythm === 'vfib_fine') ? '---' : 
                     (rhythm === 'asystole' && !isPacerCapturing) ? '---' : effectiveHR;
 
-  const displayBPSys = showDashes ? '---' : vitals.bpSys;
-  const displayBPDia = showDashes ? '---' : vitals.bpDia;
-  const displayMAP = showDashes ? '---' : Math.round((vitals.bpSys + 2 * vitals.bpDia) / 3);
-  const displaySPO2 = showDashes ? '---' : vitals.spo2;
-  const displayTemp = showDashes ? '---' : vitals.temp.toFixed(1);
-  const displayRR = showDashes ? '---' : vitals.rr;
+  const displayBPSys = showPulseDashes ? '---' : vitals.bpSys;
+  const displayBPDia = showPulseDashes ? '---' : vitals.bpDia;
+  const displayMAP = showPulseDashes ? '---' : Math.round((vitals.bpSys + 2 * vitals.bpDia) / 3);
+  const displaySPO2 = showPulseDashes ? '---' : vitals.spo2;
+  const displayTemp = (showDashes || isPEA) ? '---' : vitals.temp.toFixed(1);
+  const displayRR = (showDashes || isPEA) ? '---' : vitals.rr;
 
   return (
     <>
       <div className="monitor-grid">
         <div className="waveform-section">
           {/* ECG Channel */}
-          {showHR && (
-            <div className="waveform-row" style={{position: 'relative'}}>
-              {monitorMessage && (
+          <div className="waveform-row" style={{position: 'relative', opacity: showHR ? 1 : 0.3}}>
+              {monitorMessage && showHR && (
                  <div style={{position: 'absolute', top: 10, left: '30%', color: '#ffcc00', fontSize: '1.5rem', fontWeight: 'bold', zIndex: 10, border: '2px solid #ffcc00', padding: '5px 20px', background: 'rgba(0,0,0,0.8)', borderRadius: '5px', letterSpacing: '2px'}}>
                     {monitorMessage}
                  </div>
               )}
               <WaveformCanvas 
-                signalGenerator={(t) => vitalsTracker.getECG(t, rhythm)} 
+                signalGenerator={showHR ? (t) => vitalsTracker.getECG(t, rhythm) : () => 0} 
                 color="var(--color-ecg)" 
                 speed={2} 
                 amplitude={0.8} 
-                drawSyncMarkers={isSyncOn}
-                pacerSpikeDetector={isPacerOn && !isPacerPaused ? () => vitalsTracker.pollPacerSpike() : null}
+                drawSyncMarkers={isSyncOn && showHR}
+                pacerSpikeDetector={showHR && isPacerOn && !isPacerPaused ? () => vitalsTracker.pollPacerSpike() : null}
               />
               <div className="vital-readout">
                 <div className="vital-label">Current Heart Rate</div>
-                <div className="vital-value" style={{color: 'var(--color-ecg)'}}>{displayHR}</div>
+                <div className="vital-value" style={{color: 'var(--color-ecg)'}}>{showHR ? displayHR : '-'}</div>
               </div>
             </div>
-          )}
 
           {/* Arterial / BP Channel */}
-          {showBP && (
-            <div className="waveform-row">
+          <div className="waveform-row" style={{opacity: showBP ? 1 : 0.3}}>
               <WaveformCanvas 
-                signalGenerator={(t) => vitalsTracker.getBP(t, rhythm)} 
+                signalGenerator={showBP ? (t) => vitalsTracker.getBP(t, rhythm) : () => 0} 
                 color="var(--color-bp)" 
                 speed={2} 
                 amplitude={0.7} 
@@ -394,44 +392,44 @@ export default function App() {
               <div className="vital-readout">
                 <div className="vital-label">Current Pressure</div>
                 <div className="vital-value" style={{color: 'var(--color-bp)', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', justifyContent: 'center'}}>
-                  <div>{displayBPSys}<span style={{fontSize: '2rem'}}>/{displayBPDia}</span></div>
-                  <div style={{fontSize: '1.8rem', lineHeight: '1', marginTop: '-5px'}}>({displayMAP})</div>
+                  {showBP ? (
+                    <>
+                      <div>{displayBPSys}<span style={{fontSize: '2rem'}}>/{displayBPDia}</span></div>
+                      <div style={{fontSize: '1.8rem', lineHeight: '1', marginTop: '-5px'}}>({displayMAP})</div>
+                    </>
+                  ) : <div>-</div>}
                 </div>
               </div>
             </div>
-          )}
 
           {/* SPO2 Channel */}
-          {showSPO2 && (
-            <div className="waveform-row">
+          <div className="waveform-row" style={{opacity: showSPO2 ? 1 : 0.3}}>
               <WaveformCanvas 
-                signalGenerator={(t) => vitalsTracker.getSPO2(t, rhythm)} 
+                signalGenerator={showSPO2 ? (t) => vitalsTracker.getSPO2(t, rhythm) : () => 0} 
                 color="var(--color-spo2)" 
                 speed={2} 
                 amplitude={0.6} 
               />
               <div className="vital-readout">
                 <div className="vital-label">Current SPO2</div>
-                <div className="vital-value" style={{color: 'var(--color-spo2)'}}>{displaySPO2}</div>
+                <div className="vital-value" style={{color: 'var(--color-spo2)'}}>{showSPO2 ? displaySPO2 : '-'}</div>
               </div>
             </div>
-          )}
 
           {/* CO2 Channel */}
-          {showCO2 && (
-            <div className="waveform-row">
+          <div className="waveform-row" style={{opacity: showCO2 ? 1 : 0.3}}>
               <WaveformCanvas 
-                signalGenerator={(t) => vitalsTracker.getCO2(t)} 
+                signalGenerator={showCO2 ? (t) => vitalsTracker.getCO2(t) : () => 0} 
                 color="var(--color-co2)" 
                 speed={1} 
                 amplitude={0.7} 
               />
               <div className="vital-readout">
                 <div className="vital-label">Current CO2 level mmHg</div>
-                <div className="vital-value" style={{color: 'var(--color-co2)'}}>{vitals.co2}</div>
+                <div className="vital-value" style={{color: 'var(--color-co2)'}}>{showCO2 ? vitals.co2 : '-'}</div>
               </div>
             </div>
-          )}
+
         </div>
 
         {/* Right Sidebar Vitals */}
@@ -574,19 +572,9 @@ export default function App() {
              )}
 
              {/* Rhythm & CPR Actions */}
-             <div style={{display: 'grid', gridTemplateColumns: '1fr', gap: '10px', paddingBottom: '15px', borderBottom: '1px solid #333', marginBottom: '10px'}}>
+             <div style={{display: 'grid', gridTemplateColumns: '1fr', gap: '10px'}}>
                  <button style={{height: '50px', fontSize: '1rem', background: '#2c3e50', border: '1px solid #34495e', color: 'white'}} onClick={() => setIsRhythmModalOpen(true)}>Rhythm Selection</button>
-             </div>
-             
-             <div className="controls-panel-title">Adjust Vitals</div>
-             <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, overflowY: 'auto'}}>
-                 <InputControl label="HR" value={vitals.hr} max={250} onChange={val => updateVital('hr', val)} />
-                 <InputControl label="RR" value={vitals.rr} max={50} onChange={val => updateVital('rr', val)} />
-                 <InputControl label="BP Sys" value={vitals.bpSys} max={250} onChange={val => updateVital('bpSys', val)} />
-                 <InputControl label="SPO2" value={vitals.spo2} max={100} onChange={val => updateVital('spo2', val)} />
-                 <InputControl label="BP Dia" value={vitals.bpDia} max={200} onChange={val => updateVital('bpDia', val)} />
-                 <InputControl label="CO2" value={vitals.co2} max={100} onChange={val => updateVital('co2', val)} />
-                 <InputControl label="Temp" value={vitals.temp} max={110} step={0.1} onChange={val => updateVital('temp', val)} />
+                 <button style={{height: '50px', fontSize: '1rem', background: '#1a2e1a', border: '1px solid #2d4d2d', color: '#86efac'}} onClick={() => setIsVitalsModalOpen(true)}>⊕ Adjust Vitals</button>
              </div>
          </div>
       </div>
@@ -600,18 +588,20 @@ export default function App() {
               <button onClick={() => setIsRhythmModalOpen(false)} style={{padding: '4px 10px', fontSize: '1rem'}}>×</button>
             </div>
             <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12}}>
-                 <button className={(rhythm === 'nsr' || (rhythm === 'cpr' && preCprState?.rhythm === 'nsr')) ? 'active' : ''} onClick={() => handleRhythmSelect('nsr', 60)}><b>[1]</b> Normal Sinus</button>
-                 <button className={(rhythm === 'brady' || (rhythm === 'cpr' && preCprState?.rhythm === 'brady')) ? 'active' : ''} onClick={() => handleRhythmSelect('brady', 40)}><b>[2]</b> Sinus Brady</button>
-                 <button className={(rhythm === 'tachy' || (rhythm === 'cpr' && preCprState?.rhythm === 'tachy')) ? 'active' : ''} onClick={() => handleRhythmSelect('tachy', 120)}><b>[3]</b> Sinus Tachy</button>
-                 <button className={(rhythm === 'svt' || (rhythm === 'cpr' && preCprState?.rhythm === 'svt')) ? 'active' : ''} onClick={() => handleRhythmSelect('svt', 160)}><b>[4]</b> SVT</button>
-                 <button className={(rhythm === 'afib_rvr' || (rhythm === 'cpr' && preCprState?.rhythm === 'afib_rvr')) ? 'active' : ''} onClick={() => handleRhythmSelect('afib_rvr', 140)}><b>[5]</b> A-Fib RVR</button>
-                 <button className={(rhythm === 'vtach' || (rhythm === 'cpr' && preCprState?.rhythm === 'vtach')) ? 'active' : ''} onClick={() => handleRhythmSelect('vtach', 180)}><b>[6]</b> V-Tach</button>
+                 <button className={(rhythm === 'nsr' || (rhythm === 'cpr' && preCprState?.rhythm === 'nsr')) ? 'active' : ''} onClick={() => handleRhythmSelect('nsr', 60)}><b>[`]</b> Normal Sinus</button>
+                 <button className={(rhythm === 'brady' || (rhythm === 'cpr' && preCprState?.rhythm === 'brady')) ? 'active' : ''} onClick={() => handleRhythmSelect('brady', 40)}><b>[1]</b> Sinus Brady</button>
+                 <button className={(rhythm === 'tachy' || (rhythm === 'cpr' && preCprState?.rhythm === 'tachy')) ? 'active' : ''} onClick={() => handleRhythmSelect('tachy', 120)}><b>[2]</b> Sinus Tachy</button>
+                 <button className={(rhythm === 'svt' || (rhythm === 'cpr' && preCprState?.rhythm === 'svt')) ? 'active' : ''} onClick={() => handleRhythmSelect('svt', 160)}><b>[3]</b> SVT</button>
+                 <button className={(rhythm === 'afib_rvr' || (rhythm === 'cpr' && preCprState?.rhythm === 'afib_rvr')) ? 'active' : ''} onClick={() => handleRhythmSelect('afib_rvr', 140)}><b>[4]</b> A-Fib RVR</button>
+                 <button className={(rhythm === 'vtach_pulse' || (rhythm === 'cpr' && preCprState?.rhythm === 'vtach_pulse')) ? 'active' : ''} onClick={() => handleRhythmSelect('vtach_pulse', 150)}><b>[5]</b> V-Tach (Pulse)</button>
+                 <button className={(rhythm === 'vtach' || (rhythm === 'cpr' && preCprState?.rhythm === 'vtach')) ? 'active' : ''} onClick={() => handleRhythmSelect('vtach', 180)}><b>[6]</b> V-Tach (Pulseless)</button>
                  <button className={(rhythm === 'mobitz1' || (rhythm === 'cpr' && preCprState?.rhythm === 'mobitz1')) ? 'active' : ''} onClick={() => handleRhythmSelect('mobitz1', 70)}><b>[7]</b> Mobitz I</button>
                  <button className={(rhythm === 'mobitz2' || (rhythm === 'cpr' && preCprState?.rhythm === 'mobitz2')) ? 'active' : ''} onClick={() => handleRhythmSelect('mobitz2', 70)}><b>[8]</b> Mobitz II</button>
                  <button className={(rhythm === 'complete_hb' || (rhythm === 'cpr' && preCprState?.rhythm === 'complete_hb')) ? 'active' : ''} onClick={() => handleRhythmSelect('complete_hb', 35)}><b>[9]</b> 3rd Deg Block</button>
                  <button className={(rhythm === 'vfib_coarse' || (rhythm === 'cpr' && preCprState?.rhythm === 'vfib_coarse')) ? 'active' : ''} onClick={() => handleRhythmSelect('vfib_coarse')}><b>[0]</b> Coarse V-Fib</button>
                  <button className={(rhythm === 'vfib_fine' || (rhythm === 'cpr' && preCprState?.rhythm === 'vfib_fine')) ? 'active' : ''} onClick={() => handleRhythmSelect('vfib_fine')}><b>[-]</b> Fine V-Fib</button>
                  <button className={(rhythm === 'asystole' || (rhythm === 'cpr' && preCprState?.rhythm === 'asystole')) ? 'active' : ''} onClick={() => handleRhythmSelect('asystole', 0)}><b>[=]</b> Asystole</button>
+                 <button className={(rhythm === 'pea' || (rhythm === 'cpr' && preCprState?.rhythm === 'pea')) ? 'active' : ''} onClick={() => handleRhythmSelect('pea', 60)}><b>[P]</b> PEA</button>
             </div>
           </div>
         </div>
@@ -657,12 +647,12 @@ export default function App() {
       {/* Scenario Selection Modal */}
       {isScenarioModalOpen && (
         <div className="modal-overlay" onClick={() => setIsScenarioModalOpen(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '450px'}}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '450px', maxHeight: '80vh', display: 'flex', flexDirection: 'column'}}>
             <div className="modal-header">
               <span>Scenario Menu</span>
               <button onClick={() => setIsScenarioModalOpen(false)} style={{padding: '4px 10px', fontSize: '1rem'}}>×</button>
             </div>
-            <div style={{display: 'flex', flexDirection: 'column', gap: '10px'}}>
+            <div style={{display: 'flex', flexDirection: 'column', gap: '10px', overflowY: 'auto', flex: 1, paddingRight: '4px'}}>
               {scenarios.map(scenario => (
                 <button
                   key={scenario.id}
@@ -672,21 +662,41 @@ export default function App() {
                     padding: '12px 16px', borderRadius: '6px', textAlign: 'left',
                     background: activeScenario?.id === scenario.id ? '#1e3a5f' : '#1a1d24',
                     border: activeScenario?.id === scenario.id ? '1px solid #60a5fa' : '1px solid #333',
-                    color: 'white', gap: '4px'
+                    color: 'white', gap: '4px', flexShrink: 0
                   }}
                 >
                   <div style={{fontWeight: 'bold', fontSize: '0.9rem'}}>{scenario.title}</div>
                   <div style={{fontSize: '0.75rem', color: '#9ca3af'}}>{scenario.description} — {scenario.stages.length} stages</div>
                 </button>
               ))}
-              {activeScenario && (
-                <button
-                  onClick={() => { setActiveScenario(null); setCurrentStageIndex(0); setIsScenarioModalOpen(false); }}
-                  style={{marginTop: '4px', background: '#2a0a0a', border: '1px solid #7f1d1d', color: '#fca5a5', padding: '8px'}}
-                >
-                  ✕ Clear Active Scenario
-                </button>
-              )}
+            </div>
+            {activeScenario && (
+              <button
+                onClick={() => { setActiveScenario(null); setCurrentStageIndex(0); setIsScenarioModalOpen(false); }}
+                style={{marginTop: '10px', background: '#2a0a0a', border: '1px solid #7f1d1d', color: '#fca5a5', padding: '8px', flexShrink: 0}}
+              >
+                ✕ Clear Active Scenario
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+      {/* Vitals Adjustment Modal */}
+      {isVitalsModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsVitalsModalOpen(false)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '380px'}}>
+            <div className="modal-header">
+              <span>Adjust Vitals</span>
+              <button onClick={() => setIsVitalsModalOpen(false)} style={{padding: '4px 10px', fontSize: '1rem'}}>×</button>
+            </div>
+            <div style={{display: 'flex', flexDirection: 'column', gap: '18px', padding: '4px 0'}}>
+              <InputControl label="Heart Rate (HR)" value={vitals.hr} max={250} onChange={val => updateVital('hr', val)} />
+              <InputControl label="Systolic BP" value={vitals.bpSys} max={250} onChange={val => updateVital('bpSys', val)} />
+              <InputControl label="Diastolic BP" value={vitals.bpDia} max={200} onChange={val => updateVital('bpDia', val)} />
+              <InputControl label="SpO2 (%)" value={vitals.spo2} max={100} onChange={val => updateVital('spo2', val)} />
+              <InputControl label="Resp Rate (RR)" value={vitals.rr} max={50} onChange={val => updateVital('rr', val)} />
+              <InputControl label="EtCO2 (mmHg)" value={vitals.co2} max={100} onChange={val => updateVital('co2', val)} />
+              <InputControl label="Temperature (°F)" value={vitals.temp} max={110} step={0.1} onChange={val => updateVital('temp', val)} />
             </div>
           </div>
         </div>

@@ -202,7 +202,7 @@ class SignalGeneratorCore {
       
       // --- Lethal Alarm Driver ---
       const pacerIsEffective = this.isPacerOn && !this.isPacerPaused && this.pacerOutput >= 70 && this.rhythm !== 'vfib_coarse' && this.rhythm !== 'vfib_fine';
-      const isLethal = (this.rhythm === 'asystole' || this.rhythm === 'vfib_coarse' || this.rhythm === 'vfib_fine' || this.rhythm === 'vtach') && !pacerIsEffective && this.rhythm !== 'cpr';
+      const isLethal = (this.rhythm === 'asystole' || this.rhythm === 'vfib_coarse' || this.rhythm === 'vfib_fine' || this.rhythm === 'vtach' || this.rhythm === 'pea') && !pacerIsEffective && this.rhythm !== 'cpr';
       
       this.setLethalAlarmState(isLethal);
       if (this.lethalAlarmOsc && this.lethalAlarmGain && this.audioCtx) {
@@ -347,7 +347,7 @@ class SignalGeneratorCore {
     } else if (rhythm === 'vfib_fine' && !forceRender) {
       const t = time / 25 + this.vFibSeed;
       baseVal = (Math.sin(t) + Math.sin(t * 2.1) + Math.sin(t * 1.3) + Math.cos(t * 3.7)) / 15;
-    } else if (rhythm === 'vtach' && !forceRender) {
+    } else if ((rhythm === 'vtach' || rhythm === 'vtach_pulse') && !forceRender) {
       baseVal = -Math.sin(this.ecgPhase * Math.PI * 2) * 0.8;
     } else {
       let val = (Math.random() - 0.5) * 0.02;
@@ -437,7 +437,7 @@ class SignalGeneratorCore {
 
   getBP(time, rhythm) {
     if (this.postShockFlatlineRemaining > 0) return 0;
-    if (rhythm === 'asystole' || rhythm === 'vfib_coarse' || rhythm === 'vfib_fine') return 0;
+    if (rhythm === 'asystole' || rhythm === 'vfib_coarse' || rhythm === 'vfib_fine' || rhythm === 'vtach' || rhythm === 'pea') return 0;
     if (this.isCurrentBeatDropped && this.activePacedTime <= 0) return 0; // Absolute zero diastolic trough
     if (rhythm === 'cpr') {
       const activeBPM = Math.max(1, this.hr);
@@ -462,7 +462,7 @@ class SignalGeneratorCore {
 
   getSPO2(time, rhythm) {
     if (this.postShockFlatlineRemaining > 0) return 0;
-    if (rhythm === 'asystole' || rhythm === 'vfib_coarse' || rhythm === 'vfib_fine' || rhythm === 'cpr') return 0;
+    if (rhythm === 'asystole' || rhythm === 'vfib_coarse' || rhythm === 'vfib_fine' || rhythm === 'vtach' || rhythm === 'cpr' || rhythm === 'pea') return 0;
     if (this.isCurrentBeatDropped && this.activePacedTime <= 0) return 0.25; // Extended diastolic flatline runoff
     
     // Offset standard ECG phase so SPO2 wave aligns slightly after QRS
