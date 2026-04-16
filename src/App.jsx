@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import WaveformCanvas from './components/WaveformCanvas';
 import { vitalsTracker } from './utils/signalGenerators';
 import { scenarios } from './utils/scenarios';
-import { Activity, HeartPulse, Settings, Volume2 } from 'lucide-react';
+import { Activity, HeartPulse, Settings, Volume2, Bell, BellOff } from 'lucide-react';
 
 const InputControl = ({label, value, max, step = 1, onChange}) => (
   <div style={{display: 'flex', flexDirection: 'column'}}>
@@ -310,6 +310,7 @@ export default function App() {
         case '-': handleRhythmSelect('vfib_fine'); break;
         case '=': handleRhythmSelect('asystole', 0); break;
         case 'p': handleRhythmSelect('pea', 60); break;
+        case 'c': handleCPR(); break;
         case 'arrowleft': prevStage(); break;
         case 'arrowright': nextStage(); break;
         default: handled = false; break;
@@ -437,6 +438,22 @@ export default function App() {
           <div className="panel" style={{flex: 1, justifyContent: 'center', alignItems: 'center'}}>
              <div style={{display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '5px'}}>
                  <span style={{fontSize: '0.8rem', color: 'var(--color-text-dim)'}}>ALARMS</span>
+                 <button
+                   title={isMuted ? 'Unmute alarms' : 'Mute alarms'}
+                   onClick={() => setIsMuted(!isMuted)}
+                   style={{
+                     background: 'transparent', border: 'none', padding: '2px 4px',
+                     cursor: 'pointer', display: 'flex', alignItems: 'center',
+                     borderRadius: '4px', transition: 'background 0.15s'
+                   }}
+                   onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                 >
+                   {isMuted
+                     ? <BellOff size={14} color="#bf362e" />
+                     : <Bell size={14} color="var(--color-text-dim)" />
+                   }
+                 </button>
                  <Settings size={14} color="var(--color-text-dim)" style={{cursor: 'pointer'}} onClick={() => setIsSettingsOpen(true)} />
              </div>
              <div style={{fontSize: '2rem', color: 'var(--color-ecg)', fontWeight: 'bold'}}>{time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })}</div>
@@ -610,35 +627,108 @@ export default function App() {
       {/* Settings Modal */}
       {isSettingsOpen && (
         <div className="modal-overlay" onClick={() => setIsSettingsOpen(false)}>
-          <div className="modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '300px'}}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{maxWidth: '420px', maxHeight: '85vh', display: 'flex', flexDirection: 'column'}}>
             <div className="modal-header">
               <span>System Settings</span>
               <button onClick={() => setIsSettingsOpen(false)} style={{padding: '4px 10px', fontSize: '1rem'}}>×</button>
             </div>
-            <div style={{display: 'flex', flexDirection: 'column', gap: 20, padding: '10px 0'}}>
-                 <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center'}}>
-                     <span>Mute Alarms</span>
-                     <button 
-                        style={{background: isMuted ? '#bf362e' : '#223', color: 'white', padding: '6px 12px'}}
-                        onClick={() => setIsMuted(!isMuted)}
-                     >
-                        {isMuted ? 'UNMUTE' : 'MUTE'}
-                     </button>
-                 </div>
-                 <div style={{display: 'flex', flexDirection: 'column', gap: 10}}>
-                     <span>System Volume ({volume}%)</span>
-                     <div style={{display: 'flex', alignItems: 'center', gap: 10}}>
-                         <Volume2 size={20} color={isMuted ? "#555" : "white"}/>
-                         <input 
-                           type="range" 
-                           min="0" max="100" 
-                           value={volume} 
-                           onChange={(e) => setVolume(e.target.value)} 
-                           disabled={isMuted}
-                           style={{flex: 1}}
-                         />
-                     </div>
-                 </div>
+            <div style={{display: 'flex', flexDirection: 'column', gap: 20, padding: '10px 0', overflowY: 'auto', flex: 1}}>
+
+              {/* Volume */}
+              <div style={{display: 'flex', flexDirection: 'column', gap: 10}}>
+                <span>System Volume ({volume}%)</span>
+                <div style={{display: 'flex', alignItems: 'center', gap: 10}}>
+                  <Volume2 size={20} color={isMuted ? "#555" : "white"}/>
+                  <input
+                    type="range"
+                    min="0" max="100"
+                    value={volume}
+                    onChange={(e) => setVolume(e.target.value)}
+                    disabled={isMuted}
+                    style={{flex: 1}}
+                  />
+                </div>
+              </div>
+
+              {/* Keyboard Shortcuts */}
+              <div style={{borderTop: '1px solid #333', paddingTop: '16px'}}>
+                <div style={{fontSize: '0.7rem', color: 'var(--color-text-dim)', letterSpacing: '1px', marginBottom: '12px'}}>KEYBOARD SHORTCUTS</div>
+
+                {/* Rhythms */}
+                <div style={{fontSize: '0.65rem', color: '#60a5fa', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px'}}>Rhythms</div>
+                <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px', marginBottom: '14px'}}>
+                  {[
+                    ['`', 'Normal Sinus'],
+                    ['1', 'Sinus Brady'],
+                    ['2', 'Sinus Tachy'],
+                    ['3', 'SVT'],
+                    ['4', 'A-Fib RVR'],
+                    ['5', 'V-Tach (Pulse)'],
+                    ['6', 'V-Tach (Pulseless)'],
+                    ['7', 'Mobitz I'],
+                    ['8', 'Mobitz II'],
+                    ['9', '3rd Deg Block'],
+                    ['0', 'Coarse V-Fib'],
+                    ['-', 'Fine V-Fib'],
+                    ['=', 'Asystole'],
+                    ['P', 'PEA'],
+                    ['C', 'Toggle CPR'],
+                  ].map(([key, label]) => (
+                    <div key={key} style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                      <kbd style={{
+                        background: '#1a1d24', border: '1px solid #444', borderRadius: '4px',
+                        padding: '1px 5px', fontSize: '0.7rem', color: '#e2e8f0', fontFamily: 'monospace',
+                        minWidth: '20px', textAlign: 'center', flexShrink: 0,
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.5)'
+                      }}>{key}</kbd>
+                      <span style={{fontSize: '0.72rem', color: '#9ca3af'}}>{label}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Vitals */}
+                <div style={{fontSize: '0.65rem', color: '#34d399', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px'}}>Vitals Adjustment</div>
+                <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px', marginBottom: '14px'}}>
+                  {[
+                    ['Q / A', 'HR +5 / −5'],
+                    ['W / S', 'Sys BP +5 / −5'],
+                    ['E / D', 'Dia BP +5 / −5'],
+                    ['R / F', 'SpO2 +1 / −1'],
+                    ['T / G', 'Resp Rate +1 / −1'],
+                    ['Y / H', 'EtCO2 +1 / −1'],
+                  ].map(([key, label]) => (
+                    <div key={key} style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                      <kbd style={{
+                        background: '#1a1d24', border: '1px solid #444', borderRadius: '4px',
+                        padding: '1px 5px', fontSize: '0.7rem', color: '#e2e8f0', fontFamily: 'monospace',
+                        minWidth: '20px', textAlign: 'center', flexShrink: 0,
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.5)'
+                      }}>{key}</kbd>
+                      <span style={{fontSize: '0.72rem', color: '#9ca3af'}}>{label}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Navigation */}
+                <div style={{fontSize: '0.65rem', color: '#f59e0b', marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.5px'}}>Scenario Navigation</div>
+                <div style={{display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 16px'}}>
+                  {[
+                    ['←', 'Previous Stage'],
+                    ['→', 'Next Stage'],
+                  ].map(([key, label]) => (
+                    <div key={key} style={{display: 'flex', alignItems: 'center', gap: '6px'}}>
+                      <kbd style={{
+                        background: '#1a1d24', border: '1px solid #444', borderRadius: '4px',
+                        padding: '1px 5px', fontSize: '0.7rem', color: '#e2e8f0', fontFamily: 'monospace',
+                        minWidth: '20px', textAlign: 'center', flexShrink: 0,
+                        boxShadow: '0 1px 2px rgba(0,0,0,0.5)'
+                      }}>{key}</kbd>
+                      <span style={{fontSize: '0.72rem', color: '#9ca3af'}}>{label}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
             </div>
           </div>
         </div>
