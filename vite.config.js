@@ -8,13 +8,13 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.svg', 'pwa-192x192.png', 'pwa-512x512.png'],
+      includeAssets: ['favicon.png', 'favicon-48.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-apple-touch.png'],
       manifest: {
-        name: 'ECG Simulator',
-        short_name: 'ECGSim',
+        name: 'ACLS HeartLab',
+        short_name: 'HeartLab',
         description: 'Advanced ACLS Monitor Simulator',
         theme_color: '#000000',
-        background_color: '#000000',
+        background_color: '#ffffff',
         display: 'standalone',
         icons: [
           {
@@ -25,6 +25,12 @@ export default defineConfig({
           {
             src: 'pwa-512x512.png',
             sizes: '512x512',
+            type: 'image/png',
+            purpose: 'any maskable'
+          },
+          {
+            src: 'pwa-apple-touch.png',
+            sizes: '180x180',
             type: 'image/png'
           }
         ]

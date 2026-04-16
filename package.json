@@ -1,5 +1,5 @@
 {
-  "name": "ecgsim",
+  "name": "acls-heartlab",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -8,7 +8,7 @@
     "build": "vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "deploy": "vite build && wrangler pages deploy dist --project-name ecgsim"
+    "deploy": "vite build && wrangler pages deploy dist --project-name acls-heartlab"
   },
   "dependencies": {
     "lucide-react": "^1.8.0",
